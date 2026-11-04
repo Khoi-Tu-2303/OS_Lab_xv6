@@ -5,6 +5,15 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
+
+extern struct proc proc[NPROC];
+extern struct spinlock wait_lock;
+extern struct spinlock sysinfo_lock;
+
+static struct sysinfo k_sysinfo;
+static struct file *ofile_snap[NPROC][NOFILE];
+static int pid_snap[NPROC];
 
 uint64
 sys_exit(void)
@@ -109,5 +118,49 @@ sys_sysinfo(void)
 {
   uint64 addr;
   argaddr(0, &addr);
-  return collect_sysinfo(addr);
+
+  acquire(&sysinfo_lock);
+  memset(&k_sysinfo, 0, sizeof(k_sysinfo));
+  memset(ofile_snap, 0, sizeof(ofile_snap));
+  memset(pid_snap, 0, sizeof(pid_snap));
+
+  // Pha 1: Quét proc[] thu thập tiến trình và chụp ofile_snap, pid_snap
+  int nprocs = 0;
+  for(int i = 0; i < NPROC; i++){
+    struct proc *p = &proc[i];
+    acquire(&wait_lock);
+    acquire(&p->lock);
+    if(p->state != UNUSED){
+      k_sysinfo.procs[nprocs].pid = p->pid;
+      k_sysinfo.procs[nprocs].state = (int)p->state;
+      k_sysinfo.procs[nprocs].sched_count = p->sched_count;
+      k_sysinfo.procs[nprocs].ppid = (p->parent) ? p->parent->pid : 0;
+
+      pid_snap[nprocs] = p->pid;
+      int num_fds = 0;
+      for(int fd = 0; fd < NOFILE; fd++){
+        ofile_snap[nprocs][fd] = p->ofile[fd];
+        if(p->ofile[fd] != 0){
+          k_sysinfo.procs[nprocs].open_files[num_fds++] = fd;
+        }
+      }
+      k_sysinfo.procs[nprocs].num_open_files = num_fds;
+      nprocs++;
+    }
+    release(&p->lock);
+    release(&wait_lock);
+  }
+  k_sysinfo.num_procs = nprocs;
+
+  // Pha 2: Gọi get_file_info() quét ftable.file[] và đối chiếu với ofile_snap
+  get_file_info(&k_sysinfo, ofile_snap, pid_snap, nprocs);
+
+  // Sao chép k_sysinfo về không gian user bằng copyout()
+  if(addr == 0 || copyout(myproc()->pagetable, addr, (char *)&k_sysinfo, sizeof(k_sysinfo)) < 0){
+    release(&sysinfo_lock);
+    return -1;
+  }
+
+  release(&sysinfo_lock);
+  return 0;
 }

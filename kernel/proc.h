@@ -105,6 +105,6 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 
-  int trace_mask;             // Trace mask for system calls  
-  uint64 sched_count;          // Số lần tiến trình được lập lịch chạy
+  int trace_mask;              // Trace mask for system calls  
+  int sched_count;             // Số lần tiến trình được lập lịch chạy
 };

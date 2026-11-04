@@ -1,38 +1,55 @@
 #ifndef _SYSINFO_H_
 #define _SYSINFO_H_
 
-#include "types.h"
-#include "param.h"
+#ifndef NPROC
+#define NPROC 64
+#endif
 
-// Thông tin chi tiết của 1 file đang mở trong hệ thống (ftable)
+#ifndef NFILE
+#define NFILE 100
+#endif
+
+#ifndef NOFILE
+#define NOFILE 16
+#endif
+
+// File descriptor types (corresponds to enum in kernel/file.h)
+#define S_FD_NONE   0
+#define S_FD_PIPE   1
+#define S_FD_INODE  2
+#define S_FD_DEVICE 3
+
+// Process states (corresponds to enum procstate in kernel/proc.h)
+#define S_UNUSED   0
+#define S_USED     1
+#define S_SLEEPING 2
+#define S_RUNNABLE 3
+#define S_RUNNING  4
+#define S_ZOMBIE   5
+
 struct file_info {
-  int f_idx;              // Vị trí của file trong mảng ftable.file[]
-  int type;               // Loại file: FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE
-  char readable;          // Quyền đọc
-  char writable;          // Quyền ghi
-  int ref;                // Biến đếm tham chiếu (reference count)
-  int pids[NPROC];        // Danh sách PID các tiến trình đang mở file này
-  int npids;              // Số lượng tiến trình trong mảng pids
+  short type;          // S_FD_PIPE, S_FD_INODE, S_FD_DEVICE
+  char readable;       // 1 if readable, 0 otherwise
+  char writable;       // 1 if writable, 0 otherwise
+  int ref;             // reference count
+  int num_pids;        // number of processes referencing this file
+  int pids[NPROC];     // list of process IDs
 };
 
-// Thông tin chi tiết của 1 tiến trình đang hoạt động (state != UNUSED)
 struct proc_info {
-  int pid;                // Mã PID của tiến trình
-  int state;              // Trạng thái hiện tại
-  int ppid;               // PID của tiến trình cha
-  uint64 sched_count;     // Số lần tiến trình được CPU lập lịch chạy
-  int open_files[NOFILE]; // Danh sách các file mà tiến trình đang mở (lưu f_idx)
-  int nfiles;             // Số lượng file đang mở
+  int pid;             // Process ID
+  int state;           // S_USED, S_SLEEPING, S_RUNNABLE, S_RUNNING, S_ZOMBIE
+  int ppid;            // Parent Process ID
+  int sched_count;     // Number of scheduling events
+  int num_open_files;  // Number of open files
+  int open_files[NOFILE]; // List of open file descriptors
 };
 
-// Cấu trúc tổng hợp sysinfo theo đúng yêu cầu Mục 4.2 của đồ án
 struct sysinfo {
-  uint64 freemem;                // (Tùy chọn) Giữ lại bộ nhớ trống nếu muốn
-  int nopenfiles;                // Tổng số file đang mở trên toàn hệ thống
-  struct file_info files[NFILE]; // Danh sách chi tiết từng file
-
-  int nprocs;                    // Số lượng tiến trình khác UNUSED
-  struct proc_info procs[NPROC]; // Danh sách chi tiết từng tiến trình
+  int num_files;
+  struct file_info files[NFILE];
+  int num_procs;
+  struct proc_info procs[NPROC];
 };
 
 #endif
