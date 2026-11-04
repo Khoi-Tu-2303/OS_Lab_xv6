@@ -12,6 +12,7 @@
 #include "file.h"
 #include "stat.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 struct devsw devsw[NDEV];
 struct {
@@ -180,3 +181,34 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+// Trả về vị trí (index) của con trỏ f trong mảng ftable.file[]
+int
+file_index(struct file *f)
+{
+  if(f < &ftable.file[0] || f >= &ftable.file[NFILE])
+    return -1;
+  return f - &ftable.file[0];
+}
+
+// Điền danh sách các file đang mở (ref > 0) vào struct sysinfo
+void
+fill_file_info(struct sysinfo *info)
+{
+  struct file *f;
+  info->nopenfiles = 0;
+
+  acquire(&ftable.lock);
+  for(int i = 0; i < NFILE; i++){
+    f = &ftable.file[i];
+    if(f->ref > 0){
+      int idx = info->nopenfiles++;
+      info->files[idx].f_idx = i;
+      info->files[idx].type = f->type;
+      info->files[idx].readable = f->readable;
+      info->files[idx].writable = f->writable;
+      info->files[idx].ref = f->ref;
+      info->files[idx].npids = 0;
+    }
+  }
+  release(&ftable.lock);
+}

@@ -1,153 +1,98 @@
 #include "kernel/types.h"
-#include "kernel/riscv.h"
+#include "kernel/stat.h"
 #include "kernel/sysinfo.h"
 #include "user/user.h"
+#include "kernel/fcntl.h"
 
+const char *state_names[] = {
+  "UNUSED  ", "USED    ", "SLEEPING", "RUNNABLE", "RUNNING ", "ZOMBIE  "
+};
 
-void
-sinfo(struct sysinfo *info) {
-  if (sysinfo(info) < 0) {
-    printf("FAIL: sysinfo failed");
-    exit(1);
-  }
-}
+const char *ftype_names[] = {
+  "FD_NONE  ", "FD_PIPE  ", "FD_INODE ", "FD_DEVICE"
+};
 
-//
-// use sbrk() to count how many free physical memory pages there are.
-//
-int
-countfree()
-{
-  uint64 sz0 = (uint64)sbrk(0);
-  struct sysinfo info;
-  int n = 0;
+// Khai báo toàn cục để không làm tràn stack 4KB của user space
+struct sysinfo info;
 
-  while(1){
-    if((uint64)sbrk(PGSIZE) == 0xffffffffffffffff){
-      break;
-    }
-    n += PGSIZE;
-  }
-  sinfo(&info);
-  if (info.freemem != 0) {
-    printf("FAIL: there is no free mem, but sysinfo.freemem=%ld\n",
-      info.freemem);
-    exit(1);
-  }
-  sbrk(-((uint64)sbrk(0) - sz0));
-  return n;
-}
-
-void
-testmem() {
-  struct sysinfo info;
-  uint64 n = countfree();
-  
-  sinfo(&info);
-
-  if (info.freemem!= n) {
-    printf("FAIL: free mem %ld (bytes) instead of %ld\n", info.freemem, n);
-    exit(1);
-  }
-  
-  if((uint64)sbrk(PGSIZE) == 0xffffffffffffffff){
-    printf("sbrk failed");
-    exit(1);
-  }
-
-  sinfo(&info);
-    
-  if (info.freemem != n-PGSIZE) {
-    printf("FAIL: free mem %ld (bytes) instead of %ld\n", n-PGSIZE, info.freemem);
-    exit(1);
-  }
-  
-  if((uint64)sbrk(-PGSIZE) == 0xffffffffffffffff){
-    printf("sbrk failed");
-    exit(1);
-  }
-
-  sinfo(&info);
-    
-  if (info.freemem != n) {
-    printf("FAIL: free mem %ld (bytes) instead of %ld\n", n, info.freemem);
-    exit(1);
-  }
-}
-
-void
-testcall() {
-  struct sysinfo info;
-  
+void print_sysinfo(const char *title) {
   if (sysinfo(&info) < 0) {
-    printf("FAIL: sysinfo failed\n");
+    printf("sysinfo failed!\n");
     exit(1);
   }
 
-  if (sysinfo((struct sysinfo *) 0xeaeb0b5b00002f5e) !=  0xffffffffffffffff) {
-    printf("FAIL: sysinfo succeeded with bad argument\n");
-    exit(1);
-  }
-}
-
-void testproc() {
-  struct sysinfo info;
-  uint64 nproc;
-  int status;
-  int pid;
-  
-  sinfo(&info);
-  nproc = info.nproc;
-
-  pid = fork();
-  if(pid < 0){
-    printf("sysinfotest: fork failed\n");
-    exit(1);
-  }
-  if(pid == 0){
-    sinfo(&info);
-    if(info.nproc != nproc+1) {
-      printf("sysinfotest: FAIL nproc is %ld instead of %ld\n", info.nproc, nproc+1);
-      exit(1);
+  printf("\n================ %s ================\n", title);
+  printf(">> Tong so file dang mo trong he thong: %d\n", info.nopenfiles);
+  for (int i = 0; i < info.nopenfiles; i++) {
+    struct file_info *f = &info.files[i];
+    printf("   + ftable[%d]: type=%s | mode=%c%c | ref=%d | pids=[",
+           f->f_idx, ftype_names[f->type],
+           f->readable ? 'r' : '-', f->writable ? 'w' : '-', f->ref);
+    for (int j = 0; j < f->npids; j++) {
+      printf("%d%s", f->pids[j], (j == f->npids - 1) ? "" : ",");
     }
-    exit(0);
+    printf("]\n");
   }
-  wait(&status);
-  sinfo(&info);
-  if(info.nproc != nproc) {
-      printf("sysinfotest: FAIL nproc is %ld instead of %ld\n", info.nproc, nproc);
-      exit(1);
+
+  printf(">> Tong so tien trinh dang hoat dong: %d\n", info.nprocs);
+  for (int i = 0; i < info.nprocs; i++) {
+    struct proc_info *p = &info.procs[i];
+    printf("   + PID=%d (Cha: %d) | Trang thai=%s | Sched=%ld | File_mo(%d)=[",
+           p->pid, p->ppid, state_names[p->state], p->sched_count, p->nfiles);
+    for (int j = 0; j < p->nfiles; j++) {
+      printf("%d%s", p->open_files[j], (j == p->nfiles - 1) ? "" : ",");
+    }
+    printf("]\n");
   }
 }
 
-void testbad() {
-  int pid = fork();
-  int xstatus;
-  
-  if(pid < 0){
-    printf("sysinfotest: fork failed\n");
+// Test trường hợp truyền địa chỉ con trỏ lỗi (kế thừa từ bài test MIT)
+void test_bad_address() {
+  printf("\n>> Kiem tra truyen dia chi con tro loi (Bad address)...\n");
+  if (sysinfo((struct sysinfo *) 0xeaeb0b5b00002f5e) != -1) {
+    printf("FAIL: sysinfo chap nhan dia chi rac!\n");
     exit(1);
   }
-  if(pid == 0){
-      sinfo(0x0);
-      exit(0);
-  }
-  wait(&xstatus);
-  if(xstatus == -1)  // kernel killed child?
-    exit(0);
-  else {
-    printf("sysinfotest: testbad succeeded %d\n", xstatus);
-    exit(xstatus);
-  }
+  printf("   => Ket qua: Xu ly an toan, tra ve -1 thanh cong!\n");
 }
 
-int
-main(int argc, char *argv[])
-{
-  printf("sysinfotest: start\n");
-  testcall();
-  testmem();
-  testproc();
-  printf("sysinfotest: OK\n");
+int main(void) {
+  printf("=== BAT DAU KIEM THU SYSINFO CHO PROJECT 1 ===\n");
+
+  // Kịch bản 0: Kiểm tra an toàn địa chỉ
+  test_bad_address();
+
+  // Kịch bản 1: Trạng thái ban đầu
+  print_sysinfo("KICH BAN 1: HE THONG BAN DAU");
+
+  // Kịch bản 2: Kiểm tra open() và dup()
+  int fd1 = open("README", O_RDONLY);
+  int fd2 = dup(fd1);
+  print_sysinfo("KICH BAN 2: SAU KHI OPEN('README') VA DUP()");
+  close(fd1);
+  close(fd2);
+
+  // Kịch bản 3: Kiểm tra fork(), pipe() va scheduling events
+  int pfd[2];
+  pipe(pfd);
+  int pid = fork();
+  if (pid == 0) {
+    // Tiến trình con ngủ một lúc để tạo thêm sự kiện lập lịch
+    sleep(2);
+    close(pfd[0]);
+    close(pfd[1]);
+    exit(0);
+  } else {
+    sleep(1);
+    print_sysinfo("KICH BAN 3: KHI CO TIEN TRINH CON DANG CHAY & PIPE");
+    close(pfd[0]);
+    close(pfd[1]);
+    wait(0);
+  }
+
+  // Kịch bản 4: Sau khi tiến trình con kết thúc
+  print_sysinfo("KICH BAN 4: SAU KHI TIEN TRINH CON THOAT");
+
+  printf("\n=== TAT CA CAC KICH BAN KIEM THU DEU HOAN TAT! ===\n");
   exit(0);
 }

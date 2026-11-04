@@ -91,3 +91,23 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+
+uint64
+sys_trace(void)
+{
+  int mask;
+  // Lấy tham số nguyên thứ 0 truyền vào từ user space
+  argint(0, &mask);
+  myproc()->trace_mask = mask;
+  return 0;
+}
+
+
+uint64
+sys_sysinfo(void)
+{
+  uint64 addr;
+  argaddr(0, &addr);
+  return collect_sysinfo(addr);
+}
