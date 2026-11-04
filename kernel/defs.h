@@ -8,6 +8,8 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct sysinfo;
+extern struct spinlock sysinfo_lock;
 
 // bio.c
 void            binit(void);
@@ -33,6 +35,7 @@ void            fileinit(void);
 int             fileread(struct file*, uint64, int n);
 int             filestat(struct file*, uint64 addr);
 int             filewrite(struct file*, uint64, int n);
+void            collect_sysinfo(struct sysinfo*);
 
 // fs.c
 void            fsinit(int);

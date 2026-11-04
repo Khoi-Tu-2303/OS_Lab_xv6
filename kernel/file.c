@@ -12,6 +12,7 @@
 #include "file.h"
 #include "stat.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 struct devsw devsw[NDEV];
 struct {
@@ -178,5 +179,96 @@ filewrite(struct file *f, uint64 addr, int n)
   }
 
   return ret;
+}
+
+extern struct proc proc[NPROC];
+extern struct spinlock wait_lock;
+
+// Helper snapshot to record proc info and file pointers safely
+struct proc_snapshot {
+  int pid;
+  int state;
+  int ppid;
+  int sched_count;
+  int num_open_files;
+  int open_files[NOFILE];
+  struct file *ofiles[NOFILE];
+};
+
+void
+collect_sysinfo(struct sysinfo *info)
+{
+  static struct proc_snapshot snaps[NPROC];
+  int nprocs = 0;
+
+  // Step 1: Snapshot active processes without holding ftable.lock
+  for(int i = 0; i < NPROC; i++){
+    struct proc *p = &proc[i];
+    acquire(&wait_lock);
+    acquire(&p->lock);
+    if(p->state != UNUSED){
+      snaps[nprocs].pid = p->pid;
+      snaps[nprocs].state = (int)p->state;
+      snaps[nprocs].sched_count = p->sched_count;
+      snaps[nprocs].ppid = (p->parent) ? p->parent->pid : 0;
+
+      int num_fds = 0;
+      for(int fd = 0; fd < NOFILE; fd++){
+        snaps[nprocs].ofiles[fd] = p->ofile[fd];
+        if(p->ofile[fd] != 0){
+          snaps[nprocs].open_files[num_fds++] = fd;
+        }
+      }
+      snaps[nprocs].num_open_files = num_fds;
+      nprocs++;
+    }
+    release(&p->lock);
+    release(&wait_lock);
+  }
+
+  // Populate info->procs
+  info->num_procs = nprocs;
+  for(int i = 0; i < nprocs; i++){
+    info->procs[i].pid = snaps[i].pid;
+    info->procs[i].state = snaps[i].state;
+    info->procs[i].ppid = snaps[i].ppid;
+    info->procs[i].sched_count = snaps[i].sched_count;
+    info->procs[i].num_open_files = snaps[i].num_open_files;
+    for(int j = 0; j < snaps[i].num_open_files; j++){
+      info->procs[i].open_files[j] = snaps[i].open_files[j];
+    }
+  }
+
+  // Step 2: Collect open files from ftable without holding any proc->lock
+  int nfiles = 0;
+  acquire(&ftable.lock);
+  for(int i = 0; i < NFILE; i++){
+    struct file *f = &ftable.file[i];
+    if(f->ref > 0){
+      info->files[nfiles].type = (short)f->type;
+      info->files[nfiles].readable = f->readable;
+      info->files[nfiles].writable = f->writable;
+      info->files[nfiles].ref = f->ref;
+
+      // Identify which processes reference this file f
+      int pcount = 0;
+      for(int p_idx = 0; p_idx < nprocs; p_idx++){
+        int is_ref = 0;
+        for(int fd = 0; fd < NOFILE; fd++){
+          if(snaps[p_idx].ofiles[fd] == f){
+            is_ref = 1;
+            break;
+          }
+        }
+        if(is_ref && pcount < NPROC){
+          info->files[nfiles].pids[pcount++] = snaps[p_idx].pid;
+        }
+      }
+      info->files[nfiles].num_pids = pcount;
+      nfiles++;
+    }
+  }
+  release(&ftable.lock);
+  info->num_files = nfiles;
 }
 
