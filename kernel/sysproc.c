@@ -124,6 +124,9 @@ sys_sysinfo(void)
   memset(ofile_snap, 0, sizeof(ofile_snap));
   memset(pid_snap, 0, sizeof(pid_snap));
 
+  // Thu thập số byte bộ nhớ vật lý còn rảnh
+  k_sysinfo.free_memory = count_free_bytes();
+
   // Pha 1: Quét proc[] thu thập tiến trình và chụp ofile_snap, pid_snap
   int nprocs = 0;
   for(int i = 0; i < NPROC; i++){

@@ -14,8 +14,8 @@ void test_initial(void)
     exit(1);
   }
   int console_ref = (info.num_files > 0) ? info.files[0].ref : 9;
-  printf("[PASS] Test 1 (Initial state): num_files=%d (FD_DEVICE, ref=%d, pids=1,2,3), num_procs=%d, init ppid=0\n",
-         info.num_files, console_ref, info.num_procs);
+  printf("[PASS] Test 1 (Initial state): num_files=%d (FD_DEVICE, ref=%d, pids=1,2,3), num_procs=%d, init ppid=0, free_mem=%ld bytes\n",
+         info.num_files, console_ref, info.num_procs, info.free_memory);
 }
 
 void test_open(void)
@@ -158,6 +158,54 @@ void test_bad_pointer(void)
   printf("[PASS] Test 8 (Invalid pointer): NULL -> -1, 0xffffffffffffffff -> -1, no panic\n");
 }
 
+void test_free_memory(void)
+{
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 9: sysinfo failed\n");
+    exit(1);
+  }
+
+  uint64 m0 = info.free_memory;
+  if(m0 == 0 || m0 > 128 * 1024 * 1024){
+    printf("[FAIL] Test 9: invalid initial free memory %ld bytes\n", m0);
+    exit(1);
+  }
+
+  char *p = sbrk(4096);
+  if(p == (char*)-1){
+    printf("[FAIL] Test 9: sbrk(4096) failed\n");
+    exit(1);
+  }
+
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 9: sysinfo after sbrk failed\n");
+    exit(1);
+  }
+  uint64 m1 = info.free_memory;
+  if(m0 - m1 < 4096){
+    printf("[FAIL] Test 9: free memory did not decrease by at least 4096 (before: %ld, after: %ld)\n", m0, m1);
+    exit(1);
+  }
+
+  if(sbrk(-4096) == (char*)-1){
+    printf("[FAIL] Test 9: sbrk(-4096) failed\n");
+    exit(1);
+  }
+
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 9: sysinfo after dealloc failed\n");
+    exit(1);
+  }
+  uint64 m2 = info.free_memory;
+  if(m2 != m1 + 4096){
+    printf("[FAIL] Test 9: deallocated memory was not returned to freelist (m1: %ld, m2: %ld)\n", m1, m2);
+    exit(1);
+  }
+
+  printf("[PASS] Test 9 (Free memory): initial=%ld bytes (~%ld MB), sbrk(+4096)->%ld, sbrk(-4096)->%ld\n",
+         m0, m0 / (1024 * 1024), m1, m2);
+}
+
 int main(int argc, char *argv[])
 {
   printf("=== Starting sysinfotest ===\n");
@@ -169,6 +217,7 @@ int main(int argc, char *argv[])
   test_pipe();
   test_zombie();
   test_bad_pointer();
+  test_free_memory();
   printf("=== ALL TESTS PASSED! ===\n");
   exit(0);
 }
