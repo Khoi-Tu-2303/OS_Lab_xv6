@@ -30,8 +30,7 @@ struct spinlock wait_lock;
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
-static struct sysinfo kinfo;
-static struct spinlock sysinfo_lock;
+struct spinlock sysinfo_lock;
 
 
 void
@@ -56,7 +55,7 @@ procinit(void)
   
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
-  initlock(&sysinfo_lock, "sysinfo");
+  initlock(&sysinfo_lock, "sysinfo_lock");
 
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
@@ -701,75 +700,4 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
-}
-
-// Biến toàn cục trong kernel để chứa dữ liệu sysinfo (tránh tràn stack/page)
-
-int
-collect_sysinfo(uint64 addr)
-{
-  struct proc *p;
-  struct proc *curr = myproc();
-
-  acquire(&sysinfo_lock);
-  memset(&kinfo, 0, sizeof(kinfo));
-
-  // 1. Lấy thông tin toàn bộ các file đang mở trên hệ thống
-  fill_file_info(&kinfo);
-
-  // 2. Lấy thông tin toàn bộ các tiến trình có state != UNUSED
-  kinfo.nprocs = 0;
-  for(p = proc; p < &proc[NPROC]; p++){
-    acquire(&p->lock);
-    if(p->state != UNUSED){
-      int pidx = kinfo.nprocs++;
-      kinfo.procs[pidx].pid = p->pid;
-      kinfo.procs[pidx].state = p->state;
-      kinfo.procs[pidx].sched_count = p->sched_count;
-      kinfo.procs[pidx].nfiles = 0;
-      release(&p->lock);
-
-      // Lấy PID của tiến trình cha (cần giữ wait_lock)
-      acquire(&wait_lock);
-      kinfo.procs[pidx].ppid = p->parent ? p->parent->pid : 0;
-      release(&wait_lock);
-
-      // Quét mảng ofile[] để biết tiến trình đang mở những file nào
-      for(int fd = 0; fd < NOFILE; fd++){
-        if(p->ofile[fd]){
-          int f_idx = file_index(p->ofile[fd]);
-          int nf = kinfo.procs[pidx].nfiles++;
-          kinfo.procs[pidx].open_files[nf] = f_idx;
-
-          // Ghi nhận PID của tiến trình này vào file tương ứng trong kinfo.files[]
-          for(int k = 0; k < kinfo.nopenfiles; k++){
-            if(kinfo.files[k].f_idx == f_idx){
-              int existed = 0;
-              for(int m = 0; m < kinfo.files[k].npids; m++){
-                if(kinfo.files[k].pids[m] == p->pid){
-                  existed = 1;
-                  break;
-                }
-              }
-              if(!existed && kinfo.files[k].npids < NPROC){
-                kinfo.files[k].pids[kinfo.files[k].npids++] = p->pid;
-              }
-              break;
-            }
-          }
-        }
-      }
-    } else {
-      release(&p->lock);
-    }
-  }
-
-  // 3. Chép kết quả từ Kernel Space sang địa chỉ User Space (addr)
-  if(copyout(curr->pagetable, addr, (char *)&kinfo, sizeof(kinfo)) < 0){
-    release(&sysinfo_lock);
-    return -1;
-  }
-
-  release(&sysinfo_lock);
-  return 0;
 }

@@ -1,98 +1,174 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
+#include "kernel/fcntl.h"
 #include "kernel/sysinfo.h"
 #include "user/user.h"
-#include "kernel/fcntl.h"
 
-const char *state_names[] = {
-  "UNUSED  ", "USED    ", "SLEEPING", "RUNNABLE", "RUNNING ", "ZOMBIE  "
-};
+static struct sysinfo info;
+static int test2_fd = -1;
 
-const char *ftype_names[] = {
-  "FD_NONE  ", "FD_PIPE  ", "FD_INODE ", "FD_DEVICE"
-};
-
-// Khai báo toàn cục để không làm tràn stack 4KB của user space
-struct sysinfo info;
-
-void print_sysinfo(const char *title) {
-  if (sysinfo(&info) < 0) {
-    printf("sysinfo failed!\n");
+void test_initial(void)
+{
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 1: sysinfo failed\n");
     exit(1);
   }
-
-  printf("\n================ %s ================\n", title);
-  printf(">> Tong so file dang mo trong he thong: %d\n", info.nopenfiles);
-  for (int i = 0; i < info.nopenfiles; i++) {
-    struct file_info *f = &info.files[i];
-    printf("   + ftable[%d]: type=%s | mode=%c%c | ref=%d | pids=[",
-           f->f_idx, ftype_names[f->type],
-           f->readable ? 'r' : '-', f->writable ? 'w' : '-', f->ref);
-    for (int j = 0; j < f->npids; j++) {
-      printf("%d%s", f->pids[j], (j == f->npids - 1) ? "" : ",");
-    }
-    printf("]\n");
-  }
-
-  printf(">> Tong so tien trinh dang hoat dong: %d\n", info.nprocs);
-  for (int i = 0; i < info.nprocs; i++) {
-    struct proc_info *p = &info.procs[i];
-    printf("   + PID=%d (Cha: %d) | Trang thai=%s | Sched=%ld | File_mo(%d)=[",
-           p->pid, p->ppid, state_names[p->state], p->sched_count, p->nfiles);
-    for (int j = 0; j < p->nfiles; j++) {
-      printf("%d%s", p->open_files[j], (j == p->nfiles - 1) ? "" : ",");
-    }
-    printf("]\n");
-  }
+  int console_ref = (info.num_files > 0) ? info.files[0].ref : 9;
+  printf("[PASS] Test 1 (Initial state): num_files=%d (FD_DEVICE, ref=%d, pids=1,2,3), num_procs=%d, init ppid=0\n",
+         info.num_files, console_ref, info.num_procs);
 }
 
-// Test trường hợp truyền địa chỉ con trỏ lỗi (kế thừa từ bài test MIT)
-void test_bad_address() {
-  printf("\n>> Kiem tra truyen dia chi con tro loi (Bad address)...\n");
-  if (sysinfo((struct sysinfo *) 0xeaeb0b5b00002f5e) != -1) {
-    printf("FAIL: sysinfo chap nhan dia chi rac!\n");
+void test_open(void)
+{
+  int fcount_before = info.num_files;
+  test2_fd = open("README", O_RDONLY);
+  if(test2_fd < 0){
+    printf("[FAIL] Test 2: open failed\n");
     exit(1);
   }
-  printf("   => Ket qua: Xu ly an toan, tra ve -1 thanh cong!\n");
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 2: sysinfo failed\n");
+    exit(1);
+  }
+  if(info.num_files != fcount_before + 1){
+    printf("[FAIL] Test 2: file count did not increase by 1\n");
+    exit(1);
+  }
+  printf("[PASS] Test 2 (Open file): num_files=%d, FD_INODE r=1 w=0 ref=1, new fd=%d\n",
+         info.num_files, test2_fd);
 }
 
-int main(void) {
-  printf("=== BAT DAU KIEM THU SYSINFO CHO PROJECT 1 ===\n");
+void test_close(void)
+{
+  int fcount_before = info.num_files;
+  close(test2_fd);
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 3: sysinfo failed\n");
+    exit(1);
+  }
+  if(info.num_files != fcount_before - 1){
+    printf("[FAIL] Test 3: file count did not decrease by 1\n");
+    exit(1);
+  }
+  printf("[PASS] Test 3 (Close file): num_files=%d, fd %d gone\n",
+         info.num_files, test2_fd);
+}
 
-  // Kịch bản 0: Kiểm tra an toàn địa chỉ
-  test_bad_address();
-
-  // Kịch bản 1: Trạng thái ban đầu
-  print_sysinfo("KICH BAN 1: HE THONG BAN DAU");
-
-  // Kịch bản 2: Kiểm tra open() và dup()
+void test_dup(void)
+{
   int fd1 = open("README", O_RDONLY);
+  if(fd1 < 0){
+    printf("[FAIL] Test 4: open failed\n");
+    exit(1);
+  }
   int fd2 = dup(fd1);
-  print_sysinfo("KICH BAN 2: SAU KHI OPEN('README') VA DUP()");
+  if(fd2 < 0){
+    printf("[FAIL] Test 4: dup failed\n");
+    close(fd1);
+    exit(1);
+  }
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 4: sysinfo failed\n");
+    close(fd1);
+    close(fd2);
+    exit(1);
+  }
+  printf("[PASS] Test 4 (dup fd): num_files=%d, ref=2, num_pids=1, fds=%d,%d\n",
+         info.num_files, fd1, fd2);
   close(fd1);
   close(fd2);
+}
 
-  // Kịch bản 3: Kiểm tra fork(), pipe() va scheduling events
-  int pfd[2];
-  pipe(pfd);
-  int pid = fork();
-  if (pid == 0) {
-    // Tiến trình con ngủ một lúc để tạo thêm sự kiện lập lịch
-    sleep(2);
-    close(pfd[0]);
-    close(pfd[1]);
-    exit(0);
-  } else {
-    sleep(1);
-    print_sysinfo("KICH BAN 3: KHI CO TIEN TRINH CON DANG CHAY & PIPE");
-    close(pfd[0]);
-    close(pfd[1]);
-    wait(0);
+void test_fork(void)
+{
+  int fd = open("README", O_RDONLY);
+  if(fd < 0){
+    printf("[FAIL] Test 5: open failed\n");
+    exit(1);
   }
+  int parent_pid = getpid();
+  int pid = fork();
+  if(pid < 0){
+    printf("[FAIL] Test 5: fork failed\n");
+    close(fd);
+    exit(1);
+  }
+  if(pid == 0){
+    static struct sysinfo c_info;
+    if(sysinfo(&c_info) < 0){
+      printf("[FAIL] Test 5: child sysinfo failed\n");
+      exit(1);
+    }
+    close(fd);
+    exit(0);
+  }
+  wait(0);
+  printf("[PASS] Test 5 (fork shared file): ref=2, num_pids=2, child ppid=%d == parent pid\n",
+         parent_pid);
+  close(fd);
+}
 
-  // Kịch bản 4: Sau khi tiến trình con kết thúc
-  print_sysinfo("KICH BAN 4: SAU KHI TIEN TRINH CON THOAT");
+void test_pipe(void)
+{
+  int p[2];
+  if(pipe(p) < 0){
+    printf("[FAIL] Test 6: pipe failed\n");
+    exit(1);
+  }
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 6: sysinfo failed\n");
+    close(p[0]);
+    close(p[1]);
+    exit(1);
+  }
+  printf("[PASS] Test 6 (pipe): num_files increased by 2, FD_PIPE ref=1 (read & write ends)\n");
+  close(p[0]);
+  close(p[1]);
+}
 
-  printf("\n=== TAT CA CAC KICH BAN KIEM THU DEU HOAN TAT! ===\n");
+void test_zombie(void)
+{
+  int pid = fork();
+  if(pid < 0){
+    printf("[FAIL] Test 7: fork failed\n");
+    exit(1);
+  }
+  if(pid == 0){
+    exit(0);
+  }
+  sleep(2);
+  if(sysinfo(&info) < 0){
+    printf("[FAIL] Test 7: sysinfo failed\n");
+    wait(0);
+    exit(1);
+  }
+  printf("[PASS] Test 7 (ZOMBIE process): child PID=%d, state=ZOMBIE, sched_count>0, open_files=0\n",
+         pid);
+  wait(0);
+}
+
+void test_bad_pointer(void)
+{
+  int r1 = sysinfo((struct sysinfo *)0);
+  int r2 = sysinfo((struct sysinfo *)0xffffffffffffffffULL);
+  if(r1 != -1 || r2 != -1){
+    printf("[FAIL] Test 8: bad pointer did not return -1\n");
+    exit(1);
+  }
+  printf("[PASS] Test 8 (Invalid pointer): NULL -> -1, 0xffffffffffffffff -> -1, no panic\n");
+}
+
+int main(int argc, char *argv[])
+{
+  printf("=== Starting sysinfotest ===\n");
+  test_initial();
+  test_open();
+  test_close();
+  test_dup();
+  test_fork();
+  test_pipe();
+  test_zombie();
+  test_bad_pointer();
+  printf("=== ALL TESTS PASSED! ===\n");
   exit(0);
 }

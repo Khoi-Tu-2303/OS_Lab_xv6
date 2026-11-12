@@ -87,6 +87,7 @@ extern uint64 sys_pipe(void);
 extern uint64 sys_read(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_exec(void);
+extern uint64 sys_execpt(void);
 extern uint64 sys_fstat(void);
 extern uint64 sys_chdir(void);
 extern uint64 sys_dup(void);
@@ -129,6 +130,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_close]   sys_close,
 [SYS_trace]   sys_trace,
 [SYS_sysinfo] sys_sysinfo,
+[SYS_execpt]  sys_execpt,
 };
 
 static char *syscall_names[] = {
@@ -155,6 +157,7 @@ static char *syscall_names[] = {
   [SYS_close]   "close",
   [SYS_trace]   "trace",
   [SYS_sysinfo] "sysinfo",
+  [SYS_execpt]  "execpt",
 };
 
 void

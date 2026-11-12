@@ -181,34 +181,35 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
-// Trả về vị trí (index) của con trỏ f trong mảng ftable.file[]
-int
-file_index(struct file *f)
-{
-  if(f < &ftable.file[0] || f >= &ftable.file[NFILE])
-    return -1;
-  return f - &ftable.file[0];
-}
-
-// Điền danh sách các file đang mở (ref > 0) vào struct sysinfo
+// Thu thập thông tin file đang mở (Pha 2)
 void
-fill_file_info(struct sysinfo *info)
+get_file_info(struct sysinfo *info, struct file *ofile_snap[][NOFILE], int pid_snap[], int nprocs)
 {
-  struct file *f;
-  info->nopenfiles = 0;
-
+  int nfiles = 0;
   acquire(&ftable.lock);
   for(int i = 0; i < NFILE; i++){
-    f = &ftable.file[i];
+    struct file *f = &ftable.file[i];
     if(f->ref > 0){
-      int idx = info->nopenfiles++;
-      info->files[idx].f_idx = i;
-      info->files[idx].type = f->type;
-      info->files[idx].readable = f->readable;
-      info->files[idx].writable = f->writable;
-      info->files[idx].ref = f->ref;
-      info->files[idx].npids = 0;
+      info->files[nfiles].type = (short)f->type;
+      info->files[nfiles].readable = f->readable;
+      info->files[nfiles].writable = f->writable;
+      info->files[nfiles].ref = f->ref;
+
+      int pcount = 0;
+      for(int p = 0; p < nprocs; p++){
+        for(int fd = 0; fd < NOFILE; fd++){
+          if(ofile_snap[p][fd] == f){
+            if(pcount < NPROC){
+              info->files[nfiles].pids[pcount++] = pid_snap[p];
+            }
+            break; // Mỗi PID chỉ ghi nhận duy nhất 1 lần (xử lý đúng trường hợp dup())
+          }
+        }
+      }
+      info->files[nfiles].num_pids = pcount;
+      nfiles++;
     }
   }
   release(&ftable.lock);
+  info->num_files = nfiles;
 }
