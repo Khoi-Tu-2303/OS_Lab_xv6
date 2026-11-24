@@ -167,3 +167,52 @@ sys_sysinfo(void)
   release(&sysinfo_lock);
   return 0;
 }
+
+// System call: pgaccess(void *va, int len, void *mask)
+// Reports which pages in the range [va, va + len*PGSIZE) have been accessed
+// using the RISC-V PTE_A access bit, and clears PTE_A for inspected pages.
+uint64
+sys_pgaccess(void)
+{
+  uint64 va;
+  int len;
+  uint64 mask_addr;
+
+  // Lấy các đối số từ user space: va (arg 0), len (arg 1), mask_addr (arg 2)
+  argaddr(0, &va);
+  argint(1, &len);
+  argaddr(2, &mask_addr);
+
+  // Giới hạn kiểm tra số lượng trang tối đa là 32 (vừa vặn với bitmask 32-bit uint32)
+  // và kiểm tra tính hợp lệ của địa chỉ va
+  if(len < 0 || len > 32 || va >= MAXVA)
+    return -1;
+
+  struct proc *p = myproc();
+  uint32 bitmask = 0;
+  uint64 base_va = PGROUNDDOWN(va);
+
+  for(int i = 0; i < len; i++){
+    uint64 curr_va = base_va + (uint64)i * PGSIZE;
+    if(curr_va >= MAXVA)
+      return -1;
+
+    // Duyệt bảng trang để lấy con trỏ tới PTE của trang hiện tại
+    pte_t *pte = walk(p->pagetable, curr_va, 0);
+    if(pte != 0 && (*pte & PTE_V) && (*pte & PTE_A)){
+      // Nếu trang hợp lệ và bit PTE_A được bật -> ghi nhận vào bitmask
+      bitmask |= (1U << i);
+      // Xóa bit PTE_A để có thể theo dõi các truy cập tiếp theo
+      *pte &= ~PTE_A;
+    }
+  }
+
+  // Làm sạch TLB để đảm bảo phần cứng page table walker kích hoạt lại trên các lần truy cập kế tiếp
+  sfence_vma();
+
+  // Sao chép bitmask kết quả về không gian bộ nhớ của tiến trình người dùng
+  if(copyout(p->pagetable, mask_addr, (char *)&bitmask, sizeof(bitmask)) < 0)
+    return -1;
+
+  return 0;
+}
