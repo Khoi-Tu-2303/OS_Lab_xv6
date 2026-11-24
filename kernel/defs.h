@@ -25,7 +25,7 @@ void            consoleintr(int);
 void            consputc(int);
 
 // exec.c
-int             exec(char*, char**);
+int             exec(char*, char**, int);
 
 // file.c
 struct file*    filealloc(void);
@@ -176,6 +176,7 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+void           vmprint(pagetable_t);
 
 // plic.c
 void            plicinit(void);

@@ -46,7 +46,7 @@ struct proc_info {
 };
 
 struct sysinfo {
-  uint64 free_memory;              // Number of bytes of free memory
+  uint64 free_memory;       
   int num_files;
   struct file_info files[NFILE];
   int num_procs;

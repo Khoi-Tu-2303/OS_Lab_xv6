@@ -431,8 +431,9 @@ sys_chdir(void)
   return 0;
 }
 
-uint64
-sys_exec(void)
+// Shared by sys_exec (print = 0) and sys_execpt (print = 1).
+static uint64
+do_exec(int print)
 {
   char path[MAXPATH], *argv[MAXARG];
   int i;
@@ -461,7 +462,7 @@ sys_exec(void)
       goto bad;
   }
 
-  int ret = exec(path, argv);
+  int ret = exec(path, argv, print);
 
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
     kfree(argv[i]);
@@ -472,6 +473,19 @@ sys_exec(void)
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
     kfree(argv[i]);
   return -1;
+}
+
+uint64
+sys_exec(void)
+{
+  return do_exec(0);
+}
+
+// Like exec, but prints the new page table once exec has succeeded.
+uint64
+sys_execpt(void)
+{
+  return do_exec(1);
 }
 
 uint64

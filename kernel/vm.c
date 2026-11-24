@@ -108,6 +108,9 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       }
 #endif
     } else {
+      // alloc is a flag
+      // 0: do not allocate a new page table if it does not exist
+      // 1: allocate a new page table if it does not exist
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
@@ -486,15 +489,26 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
-
-#ifdef LAB_PGTBL
-void
-vmprint(pagetable_t pagetable) {
-  // your code here
+static void
+vmprint_recursive(pagetable_t pagetable, int level) {
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V) {
+      for (int j = 0; j <= level; j++) {
+        printf(" ..");
+      }
+      printf("%d: pte %p pa %p\n", i, (void*)pte, (void*)PTE2PA(pte));
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+        vmprint_recursive((pagetable_t)PTE2PA(pte), level + 1);
+      }
+    }
+  }
 }
-#endif
 
-
+void vmprint(pagetable_t pagetable) {
+  printf("page table %p\n", pagetable);
+  vmprint_recursive(pagetable, 0);
+}
 
 #ifdef LAB_PGTBL
 pte_t*
